@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    container: rust:1.85-bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup component add rustfmt clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build --workspace --release
+
+  security:
+    runs-on: ubuntu-latest
+    container: rust:1.85-bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo install cargo-audit cargo-deny --locked
+      - run: cargo generate-lockfile
+      - run: cargo audit
+      - run: cargo deny check
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t worldstreet-chain:ci .
+      - run: docker run --rm worldstreet-chain:ci version

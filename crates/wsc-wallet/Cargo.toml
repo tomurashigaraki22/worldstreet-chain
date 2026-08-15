@@ -1,0 +1,19 @@
+[package]
+name = "wsc-wallet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+argon2.workspace = true
+base64.workspace = true
+chacha20poly1305.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json = "1.0"
+thiserror.workspace = true
+wsc-core = { path = "../wsc-core" }
+wsc-crypto = { path = "../wsc-crypto" }
+zeroize.workspace = true

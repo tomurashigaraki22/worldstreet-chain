@@ -1,0 +1,23 @@
+[package]
+name = "wsc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "wsc"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+hex.workspace = true
+rpassword.workspace = true
+serde_json = "1.0"
+wsc-core = { path = "../wsc-core" }
+wsc-crypto = { path = "../wsc-crypto" }
+wsc-node = { path = "../wsc-node" }
+wsc-network = { path = "../wsc-network" }
+wsc-rpc = { path = "../wsc-rpc" }
+wsc-wallet = { path = "../wsc-wallet" }
+tokio.workspace = true

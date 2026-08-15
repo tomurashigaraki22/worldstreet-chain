@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+exclude = ["fuzz"]
+members = [
+    "crates/wsc-core",
+    "crates/wsc-crypto",
+    "crates/wsc-wallet",
+    "crates/wsc-state",
+    "crates/wsc-storage",
+    "crates/wsc-consensus",
+    "crates/wsc-node",
+    "crates/wsc-rpc",
+    "crates/wsc-network",
+    "crates/wsc-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Worldstreet Chain Contributors"]
+rust-version = "1.85"
+
+[workspace.dependencies]
+argon2 = "0.5"
+axum = "0.8"
+base64 = "0.22"
+bech32 = "0.11"
+bip39 = "2.2"
+chacha20poly1305 = "0.10"
+clap = { version = "4.5", features = ["derive"] }
+ed25519-dalek = { version = "2.1", features = ["zeroize"] }
+getrandom = "0.3"
+hex = "0.4"
+hmac = "0.12"
+postcard = { version = "1.1", features = ["alloc"] }
+rpassword = "7.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tokio = { version = "1.47", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+thiserror = "2.0"
+zeroize = { version = "1.8", features = ["derive"] }

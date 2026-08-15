@@ -1,0 +1,34 @@
+[package]
+name = "wsc-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+wsc-core = { path = "../crates/wsc-core" }
+wsc-wallet = { path = "../crates/wsc-wallet" }
+
+[[bin]]
+name = "core_decode"
+path = "fuzz_targets/core_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "address_parse"
+path = "fuzz_targets/address_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "keystore_json"
+path = "fuzz_targets/keystore_json.rs"
+test = false
+doc = false
+bench = false

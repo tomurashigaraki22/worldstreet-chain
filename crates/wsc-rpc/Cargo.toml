@@ -1,0 +1,20 @@
+[package]
+name = "wsc-rpc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+wsc-core = { path = "../wsc-core" }
+wsc-crypto = { path = "../wsc-crypto" }
+wsc-network = { path = "../wsc-network" }
+wsc-node = { path = "../wsc-node" }
+wsc-storage = { path = "../wsc-storage" }

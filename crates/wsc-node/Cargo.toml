@@ -1,0 +1,16 @@
+[package]
+name = "wsc-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json = "1.0"
+thiserror.workspace = true
+wsc-consensus = { path = "../wsc-consensus" }
+wsc-core = { path = "../wsc-core" }
+wsc-crypto = { path = "../wsc-crypto" }
+wsc-state = { path = "../wsc-state" }
+wsc-storage = { path = "../wsc-storage" }

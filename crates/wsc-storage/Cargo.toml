@@ -1,0 +1,15 @@
+[package]
+name = "wsc-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+sled = "0.34"
+thiserror.workspace = true
+wsc-core = { path = "../wsc-core" }
+wsc-crypto = { path = "../wsc-crypto" }
+wsc-state = { path = "../wsc-state" }
+

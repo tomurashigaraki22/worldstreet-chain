@@ -1,0 +1,17 @@
+[package]
+name = "wsc-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bip39.workspace = true
+ed25519-dalek.workspace = true
+getrandom.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+wsc-core = { path = "../wsc-core" }
+zeroize.workspace = true
+

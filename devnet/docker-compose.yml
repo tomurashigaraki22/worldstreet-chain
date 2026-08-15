@@ -1,0 +1,104 @@
+x-wsc: &wsc
+  build:
+    context: ..
+    target: builder
+  working_dir: /app
+  volumes:
+    - ..:/app
+    - devnet-cargo-registry:/usr/local/cargo/registry
+    - devnet-cargo-git:/usr/local/cargo/git
+    - devnet-target:/app/target
+  environment:
+    CARGO_TERM_COLOR: always
+    RUST_BACKTRACE: "1"
+
+services:
+  init:
+    <<: *wsc
+    command: cargo run --package wsc -- devnet init --root /app/devnet/data
+    restart: "no"
+
+  node1:
+    <<: *wsc
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    environment:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+      WSC_VALIDATOR_1: "0101010101010101010101010101010101010101010101010101010101010101"
+    ports:
+      - "26657:26657"
+      - "26656:26656"
+    command: >-
+      cargo run --package wsc -- node start
+      --data-dir /app/devnet/data/node-1
+      --rpc-bind 0.0.0.0:26657
+      --p2p-bind 0.0.0.0:26656
+      --peer node2:26656 --peer node3:26656 --peer node4:26656
+      --node-id validator-1 --validator-secret-env WSC_VALIDATOR_1
+
+  node2:
+    <<: *wsc
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    environment:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+      WSC_VALIDATOR_2: "0202020202020202020202020202020202020202020202020202020202020202"
+    ports:
+      - "26658:26657"
+      - "26757:26656"
+    command: >-
+      cargo run --package wsc -- node start
+      --data-dir /app/devnet/data/node-2
+      --rpc-bind 0.0.0.0:26657
+      --p2p-bind 0.0.0.0:26656
+      --peer node1:26656 --peer node3:26656 --peer node4:26656
+      --node-id validator-2 --validator-secret-env WSC_VALIDATOR_2
+
+  node3:
+    <<: *wsc
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    environment:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+      WSC_VALIDATOR_3: "0303030303030303030303030303030303030303030303030303030303030303"
+    ports:
+      - "26659:26657"
+      - "26758:26656"
+    command: >-
+      cargo run --package wsc -- node start
+      --data-dir /app/devnet/data/node-3
+      --rpc-bind 0.0.0.0:26657
+      --p2p-bind 0.0.0.0:26656
+      --peer node1:26656 --peer node2:26656 --peer node4:26656
+      --node-id validator-3 --validator-secret-env WSC_VALIDATOR_3
+
+  node4:
+    <<: *wsc
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    environment:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+      WSC_VALIDATOR_4: "0404040404040404040404040404040404040404040404040404040404040404"
+    ports:
+      - "26660:26657"
+      - "26759:26656"
+    command: >-
+      cargo run --package wsc -- node start
+      --data-dir /app/devnet/data/node-4
+      --rpc-bind 0.0.0.0:26657
+      --p2p-bind 0.0.0.0:26656
+      --peer node1:26656 --peer node2:26656 --peer node3:26656
+      --node-id validator-4 --validator-secret-env WSC_VALIDATOR_4
+
+volumes:
+  devnet-cargo-registry:
+  devnet-cargo-git:
+  devnet-target:

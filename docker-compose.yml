@@ -1,0 +1,22 @@
+services:
+  wsc:
+    build:
+      context: .
+      target: builder
+    working_dir: /app
+    ports:
+      - "26657:26657"
+      - "26656:26656"
+    volumes:
+      - .:/app
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - wsc-target:/app/target
+    environment:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+
+volumes:
+  cargo-registry:
+  cargo-git:
+  wsc-target:

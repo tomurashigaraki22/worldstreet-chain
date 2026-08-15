@@ -1,0 +1,7 @@
+target
+.git
+.wsc
+devnet/data
+devnet/*.env
+*.keystore.json
+.env
