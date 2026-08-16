@@ -1,4 +1,11 @@
 /target/
+**/target/
+cache/
+out/
+**/__pycache__/
+*.pyc
+**/dist/
+**/node_modules
 .wsc/
 devnet/data/
 devnet/*.env

@@ -3,7 +3,10 @@ use ed25519_dalek::{Signer, Verifier};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256, Sha512};
 use thiserror::Error;
-use wsc_core::{canonical_encode, Address, BlockHeader, Hash, PublicKey, Signature, Transaction};
+use wsc_core::{
+    canonical_encode, Address, BlockHeader, Hash, MnaReserveOperation, MnaSwapOperation,
+    ProgramOperation, PublicKey, Signature, TokenOperation, Transaction,
+};
 use zeroize::Zeroize;
 
 type HmacSha512 = Hmac<Sha512>;
@@ -31,11 +34,17 @@ pub enum CryptoError {
     Encoding(String),
 }
 
+pub const DEVNET_FAUCET_SECRET: [u8; 32] = [0xf0; 32];
+
 pub struct KeyPair {
     signing_key: ed25519_dalek::SigningKey,
 }
 
 impl KeyPair {
+    pub fn devnet_faucet() -> Self {
+        Self::from_secret_bytes(DEVNET_FAUCET_SECRET)
+    }
+
     pub fn generate() -> Result<Self, CryptoError> {
         let mut secret = [0u8; 32];
         getrandom::fill(&mut secret).map_err(|error| CryptoError::Random(error.to_string()))?;
@@ -85,7 +94,7 @@ impl Drop for KeyPair {
 
 pub fn generate_mnemonic() -> Result<String, CryptoError> {
     let mut entropy = [0u8; 32];
-        getrandom::fill(&mut entropy).map_err(|error| CryptoError::Random(error.to_string()))?;
+    getrandom::fill(&mut entropy).map_err(|error| CryptoError::Random(error.to_string()))?;
     let mnemonic = Mnemonic::from_entropy(&entropy)
         .map_err(|error| CryptoError::Mnemonic(error.to_string()))?;
     entropy.zeroize();
@@ -93,8 +102,8 @@ pub fn generate_mnemonic() -> Result<String, CryptoError> {
 }
 
 pub fn mnemonic_to_seed(mnemonic: &str, passphrase: &str) -> Result<[u8; 64], CryptoError> {
-    let mnemonic = Mnemonic::parse(mnemonic)
-        .map_err(|error| CryptoError::Mnemonic(error.to_string()))?;
+    let mnemonic =
+        Mnemonic::parse(mnemonic).map_err(|error| CryptoError::Mnemonic(error.to_string()))?;
     Ok(mnemonic.to_seed(passphrase))
 }
 
@@ -105,8 +114,8 @@ pub fn derive_wallet_key(seed: &[u8; 64]) -> Result<KeyPair, CryptoError> {
 }
 
 pub fn derive_hardened_path(seed: &[u8; 64], path: &[u32]) -> Result<[u8; 32], CryptoError> {
-    let mut mac = HmacSha512::new_from_slice(SLIP10_ED25519_SEED)
-        .map_err(|_| CryptoError::DerivationPath)?;
+    let mut mac =
+        HmacSha512::new_from_slice(SLIP10_ED25519_SEED).map_err(|_| CryptoError::DerivationPath)?;
     mac.update(seed);
     let master = mac.finalize().into_bytes();
 
@@ -120,8 +129,8 @@ pub fn derive_hardened_path(seed: &[u8; 64], path: &[u32]) -> Result<[u8; 32], C
             return Err(CryptoError::DerivationIndex);
         }
         let child_index = index | 0x8000_0000;
-        let mut child_mac = HmacSha512::new_from_slice(&chain_code)
-            .map_err(|_| CryptoError::DerivationPath)?;
+        let mut child_mac =
+            HmacSha512::new_from_slice(&chain_code).map_err(|_| CryptoError::DerivationPath)?;
         child_mac.update(&[0]);
         child_mac.update(&key);
         child_mac.update(&child_index.to_be_bytes());
@@ -158,9 +167,39 @@ pub fn transaction_id(transaction: &Transaction) -> Result<Hash, CryptoError> {
     Ok(Hash(sha256_domain(b"MNA/tx/v1", &bytes)))
 }
 
-pub fn block_header_id(header: &BlockHeader) -> Result<Hash, CryptoError> {
-    let bytes = canonical_encode(header)
+pub fn token_operation_id(operation: &TokenOperation) -> Result<Hash, CryptoError> {
+    let bytes = operation
+        .signing_bytes()
         .map_err(|error| CryptoError::Encoding(error.to_string()))?;
+    Ok(Hash(sha256_domain(b"MNA/token-operation/v1", &bytes)))
+}
+
+pub fn token_id_from_operation(operation_id: Hash) -> Hash {
+    Hash(sha256_domain(b"MNA/token-id/v1", operation_id.as_bytes()))
+}
+
+pub fn mna_swap_operation_id(operation: &MnaSwapOperation) -> Result<Hash, CryptoError> {
+    let bytes = operation
+        .signing_bytes()
+        .map_err(|error| CryptoError::Encoding(error.to_string()))?;
+    Ok(Hash(sha256_domain(b"MNA/mna-swap/v1", &bytes)))
+}
+
+pub fn mna_reserve_operation_id(operation: &MnaReserveOperation) -> Result<Hash, CryptoError> {
+    let bytes =
+        canonical_encode(operation).map_err(|error| CryptoError::Encoding(error.to_string()))?;
+    Ok(Hash(sha256_domain(b"MNA/mna-reserve/v1", &bytes)))
+}
+
+pub fn program_operation_id(operation: &ProgramOperation) -> Result<Hash, CryptoError> {
+    let bytes =
+        canonical_encode(operation).map_err(|error| CryptoError::Encoding(error.to_string()))?;
+    Ok(Hash(sha256_domain(b"MNA/program-operation/v1", &bytes)))
+}
+
+pub fn block_header_id(header: &BlockHeader) -> Result<Hash, CryptoError> {
+    let bytes =
+        canonical_encode(header).map_err(|error| CryptoError::Encoding(error.to_string()))?;
     Ok(Hash(sha256_domain(b"MNA/block/v1", &bytes)))
 }
 
@@ -194,7 +233,11 @@ mod tests {
         let message = b"worldstreet";
         let signature = key_pair.sign(message);
         assert!(KeyPair::verify(&key_pair.public_key(), message, &signature));
-        assert!(!KeyPair::verify(&key_pair.public_key(), b"tampered", &signature));
+        assert!(!KeyPair::verify(
+            &key_pair.public_key(),
+            b"tampered",
+            &signature
+        ));
     }
 
     #[test]
@@ -209,6 +252,9 @@ mod tests {
 
     #[test]
     fn domain_hash_is_deterministic() {
-        assert_eq!(sha256_domain(b"test", b"value"), sha256_domain(b"test", b"value"));
+        assert_eq!(
+            sha256_domain(b"test", b"value"),
+            sha256_domain(b"test", b"value")
+        );
     }
 }

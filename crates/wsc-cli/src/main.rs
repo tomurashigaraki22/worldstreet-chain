@@ -1,5 +1,11 @@
 use clap::{Args, Parser, Subcommand};
-use std::{env, fs, io::{self, Read}, net::SocketAddr, path::{Path, PathBuf}, sync::{Arc, Mutex}};
+use std::{
+    env, fs,
+    io::{self, Read},
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 use wsc_core::{Address, GenesisConfig, Validator, NATIVE_ASSET_NAME, NATIVE_ASSET_SYMBOL};
 use wsc_crypto::KeyPair;
 use wsc_node::{Node, NodeConfig};
@@ -59,7 +65,7 @@ struct NodeStartArgs {
     #[arg(long)]
     p2p_bind: Option<SocketAddr>,
     #[arg(long = "peer")]
-    peers: Vec<SocketAddr>,
+    peers: Vec<String>,
     #[arg(long, default_value = "wsc-node")]
     node_id: String,
     #[arg(long)]
@@ -86,7 +92,7 @@ struct NodeNetworkArgs {
     #[arg(long, default_value = "0.0.0.0:26656")]
     listen: SocketAddr,
     #[arg(long = "peer")]
-    peers: Vec<SocketAddr>,
+    peers: Vec<String>,
     #[arg(long, default_value = "wsc-node")]
     node_id: String,
 }
@@ -158,7 +164,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.command {
         Command::Version => {
-            println!("wsc {} | {NATIVE_ASSET_NAME} ({NATIVE_ASSET_SYMBOL})", env!("CARGO_PKG_VERSION"));
+            println!(
+                "wsc {} | {NATIVE_ASSET_NAME} ({NATIVE_ASSET_SYMBOL})",
+                env!("CARGO_PKG_VERSION")
+            );
         }
         Command::Node { command } => match command {
             NodeCommand::Init(args) => {
@@ -196,7 +205,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     peers: args.peers,
                     node_id: args.node_id,
                 };
-                let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
                 runtime.block_on(wsc_network::run(Arc::new(Mutex::new(node)), network))?;
             }
             NodeCommand::Status(args) => {
@@ -204,7 +215,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let node = Node::open(config)?;
                 println!("chain_id={}", node.genesis().chain_id);
                 println!("height={}", node.latest_block().header.height);
-                println!("block_hash={}", wsc_node::block_id_for(node.latest_block())?);
+                println!(
+                    "block_hash={}",
+                    wsc_node::block_id_for(node.latest_block())?
+                );
                 println!("finalized_height={}", node.finalized_height()?);
                 println!("finalized_hash={}", node.finalized_hash()?);
                 println!("mempool={}", node.mempool_len());
@@ -234,8 +248,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn load_validator_key(env_name: Option<&str>) -> Result<Option<KeyPair>, Box<dyn std::error::Error>> {
-    let Some(env_name) = env_name else { return Ok(None); };
+fn load_validator_key(
+    env_name: Option<&str>,
+) -> Result<Option<KeyPair>, Box<dyn std::error::Error>> {
+    let Some(env_name) = env_name else {
+        return Ok(None);
+    };
     let value = env::var(env_name)?;
     let bytes = hex::decode(value.trim())?;
     if bytes.len() != 32 {
@@ -250,7 +268,31 @@ fn init_devnet(args: DevnetInitArgs) -> Result<(), Box<dyn std::error::Error>> {
     const SECRETS: [[u8; 32]; 4] = [[1; 32], [2; 32], [3; 32], [4; 32]];
     let genesis_path = args.root.join("genesis.json");
     if genesis_path.exists() {
-        return Err(format!("devnet already exists at {}; remove it before reinitializing", args.root.display()).into());
+        let genesis: GenesisConfig = serde_json::from_str(&fs::read_to_string(&genesis_path)?)?;
+        if genesis.chain_id != args.chain_id {
+            return Err(format!(
+                "existing devnet at {} has chain ID {} instead of {}",
+                args.root.display(),
+                genesis.chain_id,
+                args.chain_id
+            )
+            .into());
+        }
+        for index in 1..=SECRETS.len() {
+            NodeConfig::load(args.root.join(format!("node-{index}")))?;
+        }
+        if !args.root.join("validators.env").is_file() {
+            return Err(format!(
+                "existing devnet at {} is incomplete: validators.env is missing",
+                args.root.display()
+            )
+            .into());
+        }
+        println!(
+            "Devnet already initialized at {}; reusing existing genesis and node data.",
+            args.root.display()
+        );
+        return Ok(());
     }
     let validators = SECRETS
         .iter()
@@ -269,6 +311,7 @@ fn init_devnet(args: DevnetInitArgs) -> Result<(), Box<dyn std::error::Error>> {
         fee_minimum: 1,
         validators,
         allocations: vec![],
+        assets: vec![],
     };
     fs::create_dir_all(&args.root)?;
     let genesis_json = serde_json::to_string_pretty(&genesis)?;
@@ -278,7 +321,11 @@ fn init_devnet(args: DevnetInitArgs) -> Result<(), Box<dyn std::error::Error>> {
         let node_dir = args.root.join(format!("node-{}", index + 1));
         let config = Node::init(&node_dir, &args.chain_id)?;
         fs::write(&config.genesis_path, format!("{genesis_json}\n"))?;
-        env_file.push_str(&format!("WSC_VALIDATOR_{}={}\n", index + 1, hex::encode(secret)));
+        env_file.push_str(&format!(
+            "WSC_VALIDATOR_{}={}\n",
+            index + 1,
+            hex::encode(secret)
+        ));
     }
     fs::write(args.root.join("validators.env"), env_file)?;
     println!("Devnet initialized at {}", args.root.display());
@@ -383,8 +430,14 @@ fn load_wallet(args: &WalletPathArgs) -> Result<Wallet, Box<dyn std::error::Erro
     Ok(keystore.decrypt(&password)?)
 }
 
-fn write_keystore(path: &Path, keystore: &EncryptedKeystore) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+fn write_keystore(
+    path: &Path,
+    keystore: &EncryptedKeystore,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         fs::create_dir_all(parent)?;
     }
     let json = keystore.to_json_pretty()?;
@@ -412,7 +465,10 @@ fn resolve_path(path: Option<PathBuf>) -> Result<PathBuf, Box<dyn std::error::Er
     Ok(PathBuf::from(".wsc/wallet.keystore.json"))
 }
 
-fn read_password(env_name: Option<&str>, prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
+fn read_password(
+    env_name: Option<&str>,
+    prompt: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     if let Some(name) = env_name {
         return Ok(env::var(name)?);
     }

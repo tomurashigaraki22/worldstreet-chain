@@ -166,6 +166,12 @@ under `devnet/data` and is ignored by Git. Review [THREAT_MODEL.md](docs/THREAT_
 For the complete fresh-VPS deployment, test, backup, firewall, upgrade, and troubleshooting procedure, see
 [VPS_DEPLOYMENT_AND_TEST_RUNBOOK.md](docs/VPS_DEPLOYMENT_AND_TEST_RUNBOOK.md).
 
+For the accurate live capability matrix and bridge gates, see [INTERTRAIN_CURRENT_CAPABILITIES.md](docs/INTERTRAIN_CURRENT_CAPABILITIES.md) and the [FRONTEND_WALLET_IMPLEMENTATION_GUIDE.md](docs/FRONTEND_WALLET_IMPLEMENTATION_GUIDE.md). For the current Rust smart-program MVP, see [PROGRAM_PLATFORM_MVP.md](docs/PROGRAM_PLATFORM_MVP.md).
+
+For simpler frontend integration, use the local TypeScript package `@watchupltd/intertrain-wallet-sdk` at [packages/intertrain-wallet-sdk](packages/intertrain-wallet-sdk/README.md).
+
+For the SOL-priced MNA lane, smart-contract VM, `.it` compiler, congestion fees, and validator economics, see [SOL_TO_MNA_SMART_CONTRACTS_AND_FEE_MARKET_PLAN.md](docs/SOL_TO_MNA_SMART_CONTRACTS_AND_FEE_MARKET_PLAN.md).
+
 ## Standards
 
 - BIP-39: https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki

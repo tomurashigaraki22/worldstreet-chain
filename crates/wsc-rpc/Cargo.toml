@@ -7,14 +7,18 @@ rust-version.workspace = true
 
 [dependencies]
 axum.workspace = true
+base64.workspace = true
 getrandom.workspace = true
 hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 wsc-core = { path = "../wsc-core" }
 wsc-crypto = { path = "../wsc-crypto" }
 wsc-network = { path = "../wsc-network" }
+wsc-program = { path = "../wsc-program" }
 wsc-node = { path = "../wsc-node" }
 wsc-storage = { path = "../wsc-storage" }
+wsc-bridge = { path = "../wsc-bridge" }

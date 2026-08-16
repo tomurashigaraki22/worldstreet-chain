@@ -1,0 +1,21 @@
+[Unit]
+Description=Intertrain Sepolia bridge relayer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/worldstreet-chain
+EnvironmentFile=-/etc/worldstreet/relayer.env
+ExecStart=/usr/bin/python3 /root/worldstreet-chain/ops/wsc-relayer.py
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=false
+ProtectSystem=strict
+ReadWritePaths=/var/lib/worldstreet-relayer
+
+[Install]
+WantedBy=multi-user.target

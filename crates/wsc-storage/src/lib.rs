@@ -1,6 +1,11 @@
+use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
+use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
-use wsc_core::{canonical_decode, canonical_encode, Block, GenesisConfig, Hash, CHAIN_ID};
+use wsc_core::{
+    canonical_decode, canonical_encode, Block, BlockHeader, GenesisConfig, Hash, Transaction,
+    CHAIN_ID,
+};
 use wsc_crypto::{block_header_id, transaction_id};
 use wsc_state::StateSnapshot;
 
@@ -11,6 +16,88 @@ const META_LATEST_HASH: &[u8] = b"latest_hash";
 const META_FINALIZED_HEIGHT: &[u8] = b"finalized_height";
 const META_FINALIZED_HASH: &[u8] = b"finalized_hash";
 const STATE_LATEST: &[u8] = b"latest";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct LegacyBlock {
+    header: BlockHeader,
+    transactions: Vec<Transaction>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PreProgramBlock {
+    header: BlockHeader,
+    transactions: Vec<Transaction>,
+    asset_operations: Vec<wsc_core::AssetOperation>,
+    token_operations: Vec<wsc_core::TokenOperation>,
+    mna_swap_operations: Vec<wsc_core::MnaSwapOperation>,
+    mna_reserve_operations: Vec<wsc_core::MnaReserveOperation>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct LegacyStateSnapshot {
+    chain_id: String,
+    fee_minimum: u128,
+    fee_pool: u128,
+    accounts: BTreeMap<wsc_core::Address, wsc_state::Account>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct LegacyAssetStateSnapshot {
+    chain_id: String,
+    fee_minimum: u128,
+    fee_pool: u128,
+    accounts: BTreeMap<wsc_core::Address, wsc_state::Account>,
+    asset_balances: BTreeMap<wsc_core::Address, BTreeMap<String, u128>>,
+    processed_asset_operations: BTreeSet<wsc_core::Hash>,
+    asset_operation_records: BTreeMap<wsc_core::Hash, wsc_core::AssetOperation>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct PreProgramStateSnapshot {
+    chain_id: String,
+    fee_minimum: u128,
+    fee_pool: u128,
+    accounts: BTreeMap<wsc_core::Address, wsc_state::Account>,
+    asset_balances: BTreeMap<wsc_core::Address, BTreeMap<String, u128>>,
+    processed_asset_operations: BTreeSet<wsc_core::Hash>,
+    asset_operation_records: BTreeMap<wsc_core::Hash, wsc_core::AssetOperation>,
+    token_definitions: BTreeMap<wsc_core::Hash, wsc_core::TokenDefinition>,
+    processed_token_operations: BTreeSet<wsc_core::Hash>,
+    token_operation_records: BTreeMap<wsc_core::Hash, wsc_core::TokenOperation>,
+    frozen_token_accounts: BTreeSet<(wsc_core::Hash, wsc_core::Address)>,
+    mna_reserve_ledger: wsc_core::MnaReserveLedger,
+    processed_mna_swap_operations: BTreeSet<wsc_core::Hash>,
+    mna_swap_operation_records: BTreeMap<wsc_core::Hash, wsc_core::MnaSwapOperation>,
+    processed_mna_reserve_operations: BTreeSet<wsc_core::Hash>,
+    mna_reserve_operation_records: BTreeMap<wsc_core::Hash, wsc_core::MnaReserveOperation>,
+}
+
+fn decode_block(value: &[u8]) -> Result<Block, StorageError> {
+    canonical_decode(value)
+        .or_else(|_| {
+            canonical_decode::<PreProgramBlock>(value).map(|legacy| Block {
+                header: legacy.header,
+                transactions: legacy.transactions,
+                asset_operations: legacy.asset_operations,
+                token_operations: legacy.token_operations,
+                mna_swap_operations: legacy.mna_swap_operations,
+                mna_reserve_operations: legacy.mna_reserve_operations,
+                program_operations: vec![],
+            })
+        })
+        .or_else(|_| {
+            canonical_decode::<LegacyBlock>(value).map(|legacy| Block {
+                header: legacy.header,
+                transactions: legacy.transactions,
+                asset_operations: vec![],
+                token_operations: vec![],
+                mna_swap_operations: vec![],
+                mna_reserve_operations: vec![],
+                program_operations: vec![],
+            })
+        })
+        .map_err(|_| StorageError::Corrupt)
+}
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -59,7 +146,8 @@ impl Store {
         let block_hash = block_header_id(&genesis_block.header)
             .map_err(|error| StorageError::Encoding(error.to_string()))?;
         if let Some(chain_id) = self.meta.get(META_CHAIN_ID)? {
-            let stored_chain_id = String::from_utf8(chain_id.to_vec()).map_err(|_| StorageError::Corrupt)?;
+            let stored_chain_id =
+                String::from_utf8(chain_id.to_vec()).map_err(|_| StorageError::Corrupt)?;
             if stored_chain_id != genesis.chain_id {
                 return Err(StorageError::ChainIdMismatch);
             }
@@ -73,17 +161,21 @@ impl Store {
             if self.meta.get(META_FINALIZED_HEIGHT)?.is_none() {
                 let zero_height = 0u64.to_be_bytes();
                 self.meta.insert(META_FINALIZED_HEIGHT, &zero_height[..])?;
-                self.meta.insert(META_FINALIZED_HASH, &block_hash.as_bytes()[..])?;
+                self.meta
+                    .insert(META_FINALIZED_HASH, &block_hash.as_bytes()[..])?;
                 self.db.flush()?;
             }
             return Ok(block_hash);
         }
 
-        self.meta.insert(META_CHAIN_ID, genesis.chain_id.as_bytes())?;
-        self.meta.insert(META_GENESIS_HASH, &block_hash.as_bytes()[..])?;
+        self.meta
+            .insert(META_CHAIN_ID, genesis.chain_id.as_bytes())?;
+        self.meta
+            .insert(META_GENESIS_HASH, &block_hash.as_bytes()[..])?;
         let zero_height = 0u64.to_be_bytes();
         self.meta.insert(META_FINALIZED_HEIGHT, &zero_height[..])?;
-        self.meta.insert(META_FINALIZED_HASH, &block_hash.as_bytes()[..])?;
+        self.meta
+            .insert(META_FINALIZED_HASH, &block_hash.as_bytes()[..])?;
         self.commit(block_hash, genesis_block, genesis_state)?;
         self.db.flush()?;
         Ok(block_hash)
@@ -95,12 +187,18 @@ impl Store {
     }
 
     pub fn genesis_hash(&self) -> Result<Hash, StorageError> {
-        let value = self.meta.get(META_GENESIS_HASH)?.ok_or(StorageError::Missing)?;
+        let value = self
+            .meta
+            .get(META_GENESIS_HASH)?
+            .ok_or(StorageError::Missing)?;
         decode_hash(&value)
     }
 
     pub fn latest_height(&self) -> Result<u64, StorageError> {
-        let value = self.meta.get(META_LATEST_HEIGHT)?.ok_or(StorageError::Missing)?;
+        let value = self
+            .meta
+            .get(META_LATEST_HEIGHT)?
+            .ok_or(StorageError::Missing)?;
         if value.len() != 8 {
             return Err(StorageError::Corrupt);
         }
@@ -115,12 +213,18 @@ impl Store {
     }
 
     pub fn latest_hash(&self) -> Result<Hash, StorageError> {
-        let value = self.meta.get(META_LATEST_HASH)?.ok_or(StorageError::Missing)?;
+        let value = self
+            .meta
+            .get(META_LATEST_HASH)?
+            .ok_or(StorageError::Missing)?;
         decode_hash(&value)
     }
 
     pub fn finalized_height(&self) -> Result<u64, StorageError> {
-        let value = self.meta.get(META_FINALIZED_HEIGHT)?.ok_or(StorageError::Missing)?;
+        let value = self
+            .meta
+            .get(META_FINALIZED_HEIGHT)?
+            .ok_or(StorageError::Missing)?;
         if value.len() != 8 {
             return Err(StorageError::Corrupt);
         }
@@ -130,7 +234,10 @@ impl Store {
     }
 
     pub fn finalized_hash(&self) -> Result<Hash, StorageError> {
-        let value = self.meta.get(META_FINALIZED_HASH)?.ok_or(StorageError::Missing)?;
+        let value = self
+            .meta
+            .get(META_FINALIZED_HASH)?
+            .ok_or(StorageError::Missing)?;
         decode_hash(&value)
     }
 
@@ -145,31 +252,111 @@ impl Store {
         }
         let height_bytes = height.to_be_bytes();
         self.meta.insert(META_FINALIZED_HEIGHT, &height_bytes[..])?;
-        self.meta.insert(META_FINALIZED_HASH, &hash.as_bytes()[..])?;
+        self.meta
+            .insert(META_FINALIZED_HASH, &hash.as_bytes()[..])?;
         self.db.flush()?;
         Ok(())
     }
 
     pub fn get_block(&self, hash: Hash) -> Result<Block, StorageError> {
-        let value = self.blocks.get(&hash.as_bytes()[..])?.ok_or(StorageError::Missing)?;
-        canonical_decode(&value).map_err(|_| StorageError::Corrupt)
+        let value = self
+            .blocks
+            .get(&hash.as_bytes()[..])?
+            .ok_or(StorageError::Missing)?;
+        decode_block(&value)
     }
 
     pub fn get_block_by_height(&self, height: u64) -> Result<Block, StorageError> {
         let key = height_key(height);
-        let value = self.heights.get(key.as_slice())?.ok_or(StorageError::Missing)?;
+        let value = self
+            .heights
+            .get(key.as_slice())?
+            .ok_or(StorageError::Missing)?;
         let hash = decode_hash(&value)?;
         self.get_block(hash)
     }
 
     pub fn get_transaction(&self, hash: Hash) -> Result<wsc_core::Transaction, StorageError> {
-        let value = self.transactions.get(&hash.as_bytes()[..])?.ok_or(StorageError::Missing)?;
+        let value = self
+            .transactions
+            .get(&hash.as_bytes()[..])?
+            .ok_or(StorageError::Missing)?;
         canonical_decode(&value).map_err(|_| StorageError::Corrupt)
     }
 
     pub fn latest_state(&self) -> Result<StateSnapshot, StorageError> {
         let value = self.state.get(STATE_LATEST)?.ok_or(StorageError::Missing)?;
-        canonical_decode(&value).map_err(|_| StorageError::Corrupt)
+        canonical_decode(&value)
+            .or_else(|_| {
+                canonical_decode::<PreProgramStateSnapshot>(&value).map(|legacy| StateSnapshot {
+                    chain_id: legacy.chain_id,
+                    fee_minimum: legacy.fee_minimum,
+                    fee_pool: legacy.fee_pool,
+                    accounts: legacy.accounts,
+                    asset_balances: legacy.asset_balances,
+                    processed_asset_operations: legacy.processed_asset_operations,
+                    asset_operation_records: legacy.asset_operation_records,
+                    token_definitions: legacy.token_definitions,
+                    processed_token_operations: legacy.processed_token_operations,
+                    token_operation_records: legacy.token_operation_records,
+                    frozen_token_accounts: legacy.frozen_token_accounts,
+                    mna_reserve_ledger: legacy.mna_reserve_ledger,
+                    processed_mna_swap_operations: legacy.processed_mna_swap_operations,
+                    mna_swap_operation_records: legacy.mna_swap_operation_records,
+                    processed_mna_reserve_operations: legacy.processed_mna_reserve_operations,
+                    mna_reserve_operation_records: legacy.mna_reserve_operation_records,
+                    programs: Default::default(),
+                    program_receipts: Default::default(),
+                    closed_programs: Default::default(),
+                })
+            })
+            .or_else(|_| {
+                canonical_decode::<LegacyAssetStateSnapshot>(&value).map(|legacy| StateSnapshot {
+                    chain_id: legacy.chain_id,
+                    fee_minimum: legacy.fee_minimum,
+                    fee_pool: legacy.fee_pool,
+                    accounts: legacy.accounts,
+                    asset_balances: legacy.asset_balances,
+                    processed_asset_operations: legacy.processed_asset_operations,
+                    asset_operation_records: legacy.asset_operation_records,
+                    token_definitions: Default::default(),
+                    processed_token_operations: Default::default(),
+                    token_operation_records: Default::default(),
+                    frozen_token_accounts: Default::default(),
+                    mna_reserve_ledger: Default::default(),
+                    processed_mna_swap_operations: Default::default(),
+                    mna_swap_operation_records: Default::default(),
+                    processed_mna_reserve_operations: Default::default(),
+                    mna_reserve_operation_records: Default::default(),
+                    programs: Default::default(),
+                    program_receipts: Default::default(),
+                    closed_programs: Default::default(),
+                })
+            })
+            .or_else(|_| {
+                canonical_decode::<LegacyStateSnapshot>(&value).map(|legacy| StateSnapshot {
+                    chain_id: legacy.chain_id,
+                    fee_minimum: legacy.fee_minimum,
+                    fee_pool: legacy.fee_pool,
+                    accounts: legacy.accounts,
+                    asset_balances: BTreeMap::new(),
+                    processed_asset_operations: Default::default(),
+                    asset_operation_records: Default::default(),
+                    token_definitions: Default::default(),
+                    processed_token_operations: Default::default(),
+                    token_operation_records: Default::default(),
+                    frozen_token_accounts: Default::default(),
+                    mna_reserve_ledger: Default::default(),
+                    processed_mna_swap_operations: Default::default(),
+                    mna_swap_operation_records: Default::default(),
+                    processed_mna_reserve_operations: Default::default(),
+                    mna_reserve_operation_records: Default::default(),
+                    programs: Default::default(),
+                    program_receipts: Default::default(),
+                    closed_programs: Default::default(),
+                })
+            })
+            .map_err(|_| StorageError::Corrupt)
     }
 
     pub fn commit(
@@ -178,12 +365,16 @@ impl Store {
         block: &Block,
         state: &StateSnapshot,
     ) -> Result<(), StorageError> {
-        let block_bytes = canonical_encode(block).map_err(|error| StorageError::Encoding(error.to_string()))?;
-        let state_bytes = canonical_encode(state).map_err(|error| StorageError::Encoding(error.to_string()))?;
+        let block_bytes =
+            canonical_encode(block).map_err(|error| StorageError::Encoding(error.to_string()))?;
+        let state_bytes =
+            canonical_encode(state).map_err(|error| StorageError::Encoding(error.to_string()))?;
 
-        self.blocks.insert(&block_hash.as_bytes()[..], block_bytes)?;
+        self.blocks
+            .insert(&block_hash.as_bytes()[..], block_bytes)?;
         let height = height_key(block.header.height);
-        self.heights.insert(&height[..], &block_hash.as_bytes()[..])?;
+        self.heights
+            .insert(&height[..], &block_hash.as_bytes()[..])?;
         self.state.insert(STATE_LATEST, state_bytes)?;
 
         for transaction in &block.transactions {
@@ -191,12 +382,14 @@ impl Store {
                 .map_err(|error| StorageError::Encoding(error.to_string()))?;
             let tx_bytes = canonical_encode(transaction)
                 .map_err(|error| StorageError::Encoding(error.to_string()))?;
-            self.transactions.insert(&tx_hash.as_bytes()[..], tx_bytes)?;
+            self.transactions
+                .insert(&tx_hash.as_bytes()[..], tx_bytes)?;
         }
 
         let latest_height = block.header.height.to_be_bytes();
         self.meta.insert(META_LATEST_HEIGHT, &latest_height[..])?;
-        self.meta.insert(META_LATEST_HASH, &block_hash.as_bytes()[..])?;
+        self.meta
+            .insert(META_LATEST_HASH, &block_hash.as_bytes()[..])?;
         self.db.flush()?;
         Ok(())
     }
@@ -251,6 +444,7 @@ mod tests {
             fee_minimum: 1,
             validators: vec![],
             allocations: vec![],
+            assets: vec![],
         };
         let state = State::from_genesis(&genesis).unwrap();
         let block = Block {
@@ -266,8 +460,15 @@ mod tests {
                 proposer_signature: None,
             },
             transactions: vec![],
+            asset_operations: vec![],
+            token_operations: vec![],
+            mna_swap_operations: vec![],
+            mna_reserve_operations: vec![],
+            program_operations: vec![],
         };
-        let hash = store.ensure_genesis(&genesis, &block, &state.snapshot()).unwrap();
+        let hash = store
+            .ensure_genesis(&genesis, &block, &state.snapshot())
+            .unwrap();
         assert_eq!(store.latest_height().unwrap(), 0);
         assert_eq!(store.latest_hash().unwrap(), hash);
         assert_eq!(store.latest_block().unwrap(), block);

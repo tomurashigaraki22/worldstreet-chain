@@ -14,3 +14,6 @@ wsc-core = { path = "../wsc-core" }
 wsc-crypto = { path = "../wsc-crypto" }
 wsc-state = { path = "../wsc-state" }
 wsc-storage = { path = "../wsc-storage" }
+
+[dev-dependencies]
+wsc-program = { path = "../wsc-program" }

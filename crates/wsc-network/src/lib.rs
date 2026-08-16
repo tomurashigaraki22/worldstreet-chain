@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     net::SocketAddr,
-    sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
 };
 use thiserror::Error;
 use tokio::{
@@ -22,7 +25,7 @@ const FRAME_READ_TIMEOUT: Duration = Duration::from_secs(3);
 pub struct NetworkConfig {
     pub chain_id: String,
     pub listen_addr: SocketAddr,
-    pub peers: Vec<SocketAddr>,
+    pub peers: Vec<String>,
     pub node_id: String,
 }
 
@@ -34,12 +37,23 @@ pub enum NetworkMessage {
         height: u64,
         node_id: String,
     },
-    GetBlocks { from: u64, to: u64 },
-    Blocks { blocks: Vec<Block> },
+    GetBlocks {
+        from: u64,
+        to: u64,
+    },
+    Blocks {
+        blocks: Vec<Block>,
+    },
     GetMempool,
-    Transactions { transactions: Vec<Transaction> },
-    Transaction { transaction: Transaction },
-    Vote { vote: Vote },
+    Transactions {
+        transactions: Vec<Transaction>,
+    },
+    Transaction {
+        transaction: Transaction,
+    },
+    Vote {
+        vote: Vote,
+    },
 }
 
 pub struct NetworkMetrics {
@@ -96,7 +110,7 @@ pub async fn run_with_validator(
 ) -> Result<(), NetworkError> {
     let listener = TcpListener::bind(config.listen_addr).await?;
     let vote_sets = Arc::new(Mutex::new(HashMap::<(u64, Hash, u64), VoteSet>::new()));
-    for peer in config.peers.iter().copied() {
+    for peer in config.peers.iter().cloned() {
         let node = Arc::clone(&node);
         let config = config.clone();
         let vote_sets = Arc::clone(&vote_sets);
@@ -104,7 +118,7 @@ pub async fn run_with_validator(
         let validator = validator.clone();
         tokio::spawn(async move {
             loop {
-                if let Ok(stream) = TcpStream::connect(peer).await {
+                if let Ok(stream) = TcpStream::connect(peer.as_str()).await {
                     let _ = serve_connection(
                         stream,
                         Arc::clone(&node),
@@ -113,7 +127,8 @@ pub async fn run_with_validator(
                         Arc::clone(&metrics),
                         validator.clone(),
                         true,
-                    ).await;
+                    )
+                    .await;
                 }
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
@@ -127,7 +142,8 @@ pub async fn run_with_validator(
         let metrics = Arc::clone(&metrics);
         let validator = validator.clone();
         tokio::spawn(async move {
-            let _ = serve_connection(stream, node, config, vote_sets, metrics, validator, false).await;
+            let _ =
+                serve_connection(stream, node, config, vote_sets, metrics, validator, false).await;
         });
     }
 }
@@ -143,32 +159,51 @@ async fn serve_connection(
 ) -> Result<(), NetworkError> {
     let hello = local_hello(&node, &config)?;
     if initiator {
-        write_message(&mut stream, &NetworkMessage::Hello {
-            chain_id: hello.chain_id.clone(),
-            genesis_hash: hello.genesis_hash,
-            height: hello.height,
-            node_id: hello.node_id.clone(),
-        }).await?;
+        write_message(
+            &mut stream,
+            &NetworkMessage::Hello {
+                chain_id: hello.chain_id.clone(),
+                genesis_hash: hello.genesis_hash,
+                height: hello.height,
+                node_id: hello.node_id.clone(),
+            },
+        )
+        .await?;
         validate_hello(read_message(&mut stream).await?, &hello)?;
-        write_message(&mut stream, &NetworkMessage::GetBlocks { from: hello.height.saturating_add(1), to: hello.height.saturating_add(129) }).await?;
+        write_message(
+            &mut stream,
+            &NetworkMessage::GetBlocks {
+                from: hello.height.saturating_add(1),
+                to: hello.height.saturating_add(129),
+            },
+        )
+        .await?;
     } else {
         validate_hello(read_message(&mut stream).await?, &hello)?;
-        write_message(&mut stream, &NetworkMessage::Hello {
-            chain_id: hello.chain_id.clone(),
-            genesis_hash: hello.genesis_hash,
-            height: hello.height,
-            node_id: hello.node_id.clone(),
-        }).await?;
-        write_message(&mut stream, &NetworkMessage::GetBlocks { from: hello.height.saturating_add(1), to: hello.height.saturating_add(129) }).await?;
+        write_message(
+            &mut stream,
+            &NetworkMessage::Hello {
+                chain_id: hello.chain_id.clone(),
+                genesis_hash: hello.genesis_hash,
+                height: hello.height,
+                node_id: hello.node_id.clone(),
+            },
+        )
+        .await?;
+        write_message(
+            &mut stream,
+            &NetworkMessage::GetBlocks {
+                from: hello.height.saturating_add(1),
+                to: hello.height.saturating_add(129),
+            },
+        )
+        .await?;
     }
 
     metrics.peer_connections.fetch_add(1, Ordering::Relaxed);
-    let latest_block = node
-        .lock()
-        .map_err(|_| NetworkError::Node("node lock poisoned".to_owned()))?
-        .latest_block()
-        .clone();
-    write_message(&mut stream, &NetworkMessage::Blocks { blocks: vec![latest_block] }).await?;
+    // Block synchronization is requested explicitly above. Do not send the
+    // peer tip as a standalone block: a lagging peer cannot import a future
+    // height and would close the connection before processing GetBlocks.
     write_message(&mut stream, &NetworkMessage::GetMempool).await?;
 
     loop {
@@ -204,8 +239,10 @@ async fn serve_connection(
                 } else {
                     Vec::new()
                 };
-                let request_from = if blocks.len() == 128 {
-                    blocks.last().map(|block| block.header.height.saturating_add(1))
+                let request_from = if blocks.len() == 129 {
+                    blocks
+                        .last()
+                        .map(|block| block.header.height.saturating_add(1))
                 } else {
                     None
                 };
@@ -216,7 +253,14 @@ async fn serve_connection(
                     }
                 }
                 if let Some(from) = request_from {
-                    write_message(&mut stream, &NetworkMessage::GetBlocks { from, to: from.saturating_add(128) }).await?;
+                    write_message(
+                        &mut stream,
+                        &NetworkMessage::GetBlocks {
+                            from,
+                            to: from.saturating_add(128),
+                        },
+                    )
+                    .await?;
                 }
                 for vote in votes {
                     write_message(&mut stream, &NetworkMessage::Vote { vote }).await?;
@@ -241,17 +285,30 @@ async fn serve_connection(
                 metrics.votes_received.fetch_add(1, Ordering::Relaxed);
                 let key = (vote.height, vote.block_hash, vote.round);
                 let finalized = {
-                    let node = node.lock().map_err(|_| NetworkError::Node("node lock poisoned".to_owned()))?;
+                    let node = node
+                        .lock()
+                        .map_err(|_| NetworkError::Node("node lock poisoned".to_owned()))?;
                     let validator_set = ValidatorSet::new(node.validators().to_vec());
-                    let mut vote_sets = vote_sets.lock().map_err(|_| NetworkError::Node("vote lock poisoned".to_owned()))?;
-                    let vote_set = vote_sets.entry(key).or_insert_with(|| VoteSet::new(
-                        vote.chain_id.clone(), vote.height, vote.round, vote.block_hash,
-                    ));
-                    vote_set.record(&validator_set, vote).map_err(|error| NetworkError::Node(error.to_string()))?;
+                    let mut vote_sets = vote_sets
+                        .lock()
+                        .map_err(|_| NetworkError::Node("vote lock poisoned".to_owned()))?;
+                    let vote_set = vote_sets.entry(key).or_insert_with(|| {
+                        VoteSet::new(
+                            vote.chain_id.clone(),
+                            vote.height,
+                            vote.round,
+                            vote.block_hash,
+                        )
+                    });
+                    vote_set
+                        .record(&validator_set, vote)
+                        .map_err(|error| NetworkError::Node(error.to_string()))?;
                     vote_set.is_quorum(&validator_set).then(|| vote_set.clone())
                 };
                 if let Some(vote_set) = finalized {
-                    let node = node.lock().map_err(|_| NetworkError::Node("node lock poisoned".to_owned()))?;
+                    let node = node
+                        .lock()
+                        .map_err(|_| NetworkError::Node("node lock poisoned".to_owned()))?;
                     node.finalize_votes(&vote_set).map_err(node_error)?;
                 }
             }
@@ -259,10 +316,17 @@ async fn serve_connection(
     }
 }
 
-fn local_hello(node: &Arc<Mutex<Node>>, config: &NetworkConfig) -> Result<HelloFields, NetworkError> {
-    let node = node.lock().map_err(|_| NetworkError::Node("node lock poisoned".to_owned()))?;
+fn local_hello(
+    node: &Arc<Mutex<Node>>,
+    config: &NetworkConfig,
+) -> Result<HelloFields, NetworkError> {
+    let node = node
+        .lock()
+        .map_err(|_| NetworkError::Node("node lock poisoned".to_owned()))?;
     if node.config().chain_id != config.chain_id {
-        return Err(NetworkError::Handshake("configured chain ID does not match node".to_owned()));
+        return Err(NetworkError::Handshake(
+            "configured chain ID does not match node".to_owned(),
+        ));
     }
     Ok(HelloFields {
         chain_id: config.chain_id.clone(),
@@ -282,20 +346,33 @@ struct HelloFields {
 
 fn validate_hello(message: NetworkMessage, expected: &HelloFields) -> Result<(), NetworkError> {
     match message {
-        NetworkMessage::Hello { chain_id, genesis_hash, .. }
-            if chain_id == expected.chain_id && genesis_hash == expected.genesis_hash => Ok(()),
-        NetworkMessage::Hello { chain_id, genesis_hash, .. } => Err(NetworkError::Handshake(format!(
+        NetworkMessage::Hello {
+            chain_id,
+            genesis_hash,
+            ..
+        } if chain_id == expected.chain_id && genesis_hash == expected.genesis_hash => Ok(()),
+        NetworkMessage::Hello {
+            chain_id,
+            genesis_hash,
+            ..
+        } => Err(NetworkError::Handshake(format!(
             "peer chain mismatch: chain_id={chain_id}, genesis_hash={genesis_hash}"
         ))),
-        _ => Err(NetworkError::Handshake("first peer message must be Hello".to_owned())),
+        _ => Err(NetworkError::Handshake(
+            "first peer message must be Hello".to_owned(),
+        )),
     }
 }
 
 fn collect_blocks(node: &Arc<Mutex<Node>>, from: u64, to: u64) -> Result<Vec<Block>, NetworkError> {
     if to < from || to.saturating_sub(from) > 128 {
-        return Err(NetworkError::Handshake("block range must be ordered and at most 128 blocks".to_owned()));
+        return Err(NetworkError::Handshake(
+            "block range must be ordered and at most 128 blocks".to_owned(),
+        ));
     }
-    let node = node.lock().map_err(|_| NetworkError::Node("node lock poisoned".to_owned()))?;
+    let node = node
+        .lock()
+        .map_err(|_| NetworkError::Node("node lock poisoned".to_owned()))?;
     let latest = node.latest_block().header.height;
     let end = to.min(latest);
     if from > end {
@@ -310,8 +387,12 @@ fn collect_blocks(node: &Arc<Mutex<Node>>, from: u64, to: u64) -> Result<Vec<Blo
     Ok(blocks)
 }
 
-async fn write_message<W: AsyncWrite + Unpin>(writer: &mut W, message: &NetworkMessage) -> Result<(), NetworkError> {
-    let payload = canonical_encode(message).map_err(|error| NetworkError::Encoding(error.to_string()))?;
+async fn write_message<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    message: &NetworkMessage,
+) -> Result<(), NetworkError> {
+    let payload =
+        canonical_encode(message).map_err(|error| NetworkError::Encoding(error.to_string()))?;
     if payload.len() > MAX_FRAME_BYTES {
         return Err(NetworkError::InvalidFrameLength);
     }
@@ -322,7 +403,9 @@ async fn write_message<W: AsyncWrite + Unpin>(writer: &mut W, message: &NetworkM
     Ok(())
 }
 
-async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<NetworkMessage, NetworkError> {
+async fn read_message<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> Result<NetworkMessage, NetworkError> {
     let mut length_bytes = [0u8; 4];
     timeout(FRAME_READ_TIMEOUT, reader.read_exact(&mut length_bytes))
         .await

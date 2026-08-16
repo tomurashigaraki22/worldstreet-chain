@@ -157,7 +157,11 @@ impl VoteSet {
         }
     }
 
-    pub fn record(&mut self, validator_set: &ValidatorSet, vote: Vote) -> Result<bool, ConsensusError> {
+    pub fn record(
+        &mut self,
+        validator_set: &ValidatorSet,
+        vote: Vote,
+    ) -> Result<bool, ConsensusError> {
         validator_set.validate_vote(
             &vote,
             &self.chain_id,
@@ -189,7 +193,11 @@ impl VoteSet {
     }
 }
 
-pub fn proposer_for_height(validators: &[Validator], height: u64, round: u64) -> Option<&Validator> {
+pub fn proposer_for_height(
+    validators: &[Validator],
+    height: u64,
+    round: u64,
+) -> Option<&Validator> {
     if validators.is_empty() {
         return None;
     }
@@ -224,8 +232,12 @@ mod tests {
         let hash = Hash([9; 32]);
         let mut votes = VoteSet::new(CHAIN_ID, 4, 0, hash);
 
-        assert!(!votes.record(&set, Vote::sign(CHAIN_ID, 4, 0, hash, &key_a).unwrap()).unwrap());
-        assert!(votes.record(&set, Vote::sign(CHAIN_ID, 4, 0, hash, &key_b).unwrap()).unwrap());
+        assert!(!votes
+            .record(&set, Vote::sign(CHAIN_ID, 4, 0, hash, &key_a).unwrap())
+            .unwrap());
+        assert!(votes
+            .record(&set, Vote::sign(CHAIN_ID, 4, 0, hash, &key_b).unwrap())
+            .unwrap());
         assert_eq!(votes.len(), 2);
     }
 

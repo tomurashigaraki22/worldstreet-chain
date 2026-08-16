@@ -1,0 +1,13 @@
+[package]
+name = "intertrain-wsol-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+solana-program = "2.2.0"
+hex = "0.4"
+
+[workspace]

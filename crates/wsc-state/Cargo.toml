@@ -10,4 +10,4 @@ serde.workspace = true
 thiserror.workspace = true
 wsc-core = { path = "../wsc-core" }
 wsc-crypto = { path = "../wsc-crypto" }
-
+wsc-program = { path = "../wsc-program" }

@@ -1,6 +1,7 @@
-use bech32::{Bech32m, Hrp};
+use bech32::{primitives::decode::CheckedHrpstring, Bech32m, Hrp};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{fmt, str::FromStr};
+use serde_big_array::BigArray;
+use std::{collections::BTreeMap, fmt, str::FromStr};
 use thiserror::Error;
 
 pub const CHAIN_ID: &str = "worldstreet-devnet-1";
@@ -16,6 +17,46 @@ pub struct AssetId {
     pub symbol: String,
     pub contract: Option<String>,
     pub decimals: u8,
+}
+
+impl AssetId {
+    pub fn canonical_key(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.namespace,
+            self.symbol,
+            self.contract.as_deref().unwrap_or("native")
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetDefinition {
+    pub id: AssetId,
+    pub display_name: String,
+    pub wrapped: bool,
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl AssetDefinition {
+    pub fn weth_ethereum(reference: impl Into<String>) -> Self {
+        Self {
+            id: AssetId::wrapped("ethereum", "WETH", reference, 18),
+            display_name: "Wrapped Ether".to_owned(),
+            wrapped: true,
+            enabled: false,
+        }
+    }
+
+    pub fn wsol_solana(reference: impl Into<String>) -> Self {
+        Self {
+            id: AssetId::wrapped("solana", "WSOL", reference, 9),
+            display_name: "Wrapped SOL".to_owned(),
+            wrapped: true,
+            enabled: false,
+        }
+    }
 }
 
 pub type Amount = u128;
@@ -43,6 +84,8 @@ pub struct GenesisConfig {
     pub fee_minimum: Amount,
     pub validators: Vec<Validator>,
     pub allocations: Vec<GenesisAllocation>,
+    #[serde(default)]
+    pub assets: Vec<AssetDefinition>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,10 +140,289 @@ impl BlockHeader {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AssetOperationKind {
+    Mint,
+    Burn,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetOperation {
+    pub version: u8,
+    pub operation_id: Hash,
+    pub kind: AssetOperationKind,
+    pub asset_id: AssetId,
+    pub address: Address,
+    #[serde(default)]
+    pub destination: String,
+    pub amount: Amount,
+    pub external_transaction: String,
+    pub memo: String,
+}
+
+/// Reserve-backed MNA conversion rate: two USDC base units represent one MNA
+/// base unit. Both assets use six decimals, so conversion is integer-exact.
+pub const MNA_USDC_NUMERATOR: Amount = 1;
+pub const MNA_USDC_DENOMINATOR: Amount = 2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MnaSwapKind {
+    MintMna,
+    RedeemMna,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnsignedMnaSwapOperation {
+    pub version: u8,
+    pub chain_id: String,
+    pub nonce: Nonce,
+    pub from: Address,
+    pub kind: MnaSwapKind,
+    pub collateral_asset: AssetId,
+    pub amount_usdc: Amount,
+    pub amount_mna: Amount,
+    pub fee: Amount,
+    pub public_key: PublicKey,
+    #[serde(default)]
+    pub memo: String,
+}
+
+impl UnsignedMnaSwapOperation {
+    pub fn signing_bytes(&self) -> Result<Vec<u8>, EncodingError> {
+        canonical_encode(self)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MnaSwapOperation {
+    pub unsigned: UnsignedMnaSwapOperation,
+    pub signature: Signature,
+}
+
+impl MnaSwapOperation {
+    pub fn signing_bytes(&self) -> Result<Vec<u8>, EncodingError> {
+        self.unsigned.signing_bytes()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MnaReserveOperationKind {
+    VerifyDeposit,
+    Release,
+}
+
+/// Operator-submitted external reserve accounting. It never authorizes
+/// arbitrary minting: the relayer must supply a finalized external tx/log ID,
+/// the exact 2:1 conversion, and a configured USDC asset identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MnaReserveOperation {
+    pub version: u8,
+    pub operation_id: Hash,
+    pub kind: MnaReserveOperationKind,
+    pub collateral_asset: AssetId,
+    pub address: Address,
+    pub amount_usdc: Amount,
+    pub amount_mna: Amount,
+    /// External collateral amount in the smallest unit (lamports for SOL).
+    #[serde(default)]
+    pub collateral_amount: Amount,
+    /// Oracle snapshot in micro-USD per SOL; zero for USDC operations.
+    #[serde(default)]
+    pub oracle_price_usd_micro_per_sol: Amount,
+    #[serde(default)]
+    pub oracle_timestamp: u64,
+    /// Direct SOL lane fee retained in MNA base units.
+    #[serde(default)]
+    pub fee_mna: Amount,
+    #[serde(default)]
+    pub destination: String,
+    pub external_transaction: String,
+    #[serde(default)]
+    pub memo: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MnaReserveLedger {
+    pub total_verified_deposits_usdc: Amount,
+    pub total_released_usdc: Amount,
+    pub reserve_backed_mna_minted: Amount,
+    pub total_redeemed_mna: Amount,
+    #[serde(default)]
+    pub total_verified_sol_lamports: Amount,
+    #[serde(default)]
+    pub total_released_sol_lamports: Amount,
+    #[serde(default)]
+    pub total_verified_sol_usd: Amount,
+    #[serde(default)]
+    pub total_released_sol_usd: Amount,
+    pub paused: bool,
+}
+
+impl Default for MnaReserveLedger {
+    fn default() -> Self {
+        Self {
+            total_verified_deposits_usdc: 0,
+            total_released_usdc: 0,
+            reserve_backed_mna_minted: 0,
+            total_redeemed_mna: 0,
+            total_verified_sol_lamports: 0,
+            total_released_sol_lamports: 0,
+            total_verified_sol_usd: 0,
+            total_released_sol_usd: 0,
+            paused: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TokenOperationKind {
+    Create,
+    Transfer,
+    Mint,
+    Burn,
+    SetAuthorities,
+    Freeze,
+    Unfreeze,
+    Pause,
+    Unpause,
+    UpdateMetadata,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnsignedTokenOperation {
+    pub version: u8,
+    pub chain_id: String,
+    pub nonce: Nonce,
+    pub from: Address,
+    pub kind: TokenOperationKind,
+    /// Hash::ZERO for Create; the canonical token ID for all other operations.
+    pub token_id: Hash,
+    pub to: Option<Address>,
+    pub amount: Amount,
+    pub fee: Amount,
+    pub public_key: PublicKey,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub symbol: String,
+    #[serde(default)]
+    pub decimals: u8,
+    #[serde(default)]
+    pub max_supply: Option<Amount>,
+    #[serde(default)]
+    pub mint_authority: Option<Address>,
+    #[serde(default)]
+    pub burn_authority: Option<Address>,
+    #[serde(default)]
+    pub freeze_authority: Option<Address>,
+    #[serde(default)]
+    pub metadata_uri: String,
+    #[serde(default)]
+    pub metadata_hash: Hash,
+    #[serde(default)]
+    pub memo: String,
+}
+
+impl UnsignedTokenOperation {
+    pub fn signing_bytes(&self) -> Result<Vec<u8>, EncodingError> {
+        canonical_encode(self)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenOperation {
+    pub unsigned: UnsignedTokenOperation,
+    pub signature: Signature,
+}
+
+impl TokenOperation {
+    pub fn signing_bytes(&self) -> Result<Vec<u8>, EncodingError> {
+        self.unsigned.signing_bytes()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenDefinition {
+    pub token_id: Hash,
+    pub creator: Address,
+    pub name: String,
+    pub symbol: String,
+    pub decimals: u8,
+    pub total_supply: Amount,
+    pub max_supply: Option<Amount>,
+    pub mint_authority: Option<Address>,
+    pub burn_authority: Option<Address>,
+    pub freeze_authority: Option<Address>,
+    pub metadata_uri: String,
+    pub metadata_hash: Hash,
+    pub paused: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProgramOperationKind {
+    Deploy,
+    Call,
+    StorageSet,
+    Close,
+}
+
+/// A consensus-carried Intertrain program operation. Signatures use the
+/// domain-separated program authorization message enforced by `wsc-state`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProgramOperation {
+    pub version: u8,
+    pub chain_id: String,
+    pub kind: ProgramOperationKind,
+    pub nonce: u64,
+    pub fee: Amount,
+    pub program_id: String,
+    #[serde(default)]
+    pub package: Vec<u8>,
+    #[serde(default)]
+    pub gas_limit: u64,
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub value: String,
+    pub public_key: PublicKey,
+    pub signature: Signature,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProgramRecord {
+    pub package: Vec<u8>,
+    pub creator: Address,
+    pub deployed_at_height: u64,
+    pub storage: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProgramReceiptRecord {
+    pub operation_id: Hash,
+    pub program_id: String,
+    pub kind: ProgramOperationKind,
+    pub status: String,
+    pub return_data: Vec<u8>,
+    pub gas_used: u64,
+    pub gas_limit: u64,
+    pub fee_paid: Amount,
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Block {
     pub header: BlockHeader,
     pub transactions: Vec<Transaction>,
+    #[serde(default)]
+    pub asset_operations: Vec<AssetOperation>,
+    #[serde(default)]
+    pub token_operations: Vec<TokenOperation>,
+    #[serde(default)]
+    pub mna_swap_operations: Vec<MnaSwapOperation>,
+    #[serde(default)]
+    pub mna_reserve_operations: Vec<MnaReserveOperation>,
+    #[serde(default)]
+    pub program_operations: Vec<ProgramOperation>,
 }
 
 impl AssetId {
@@ -126,6 +448,15 @@ impl AssetId {
             decimals,
         }
     }
+
+    pub fn custom(token_id: Hash, symbol: impl Into<String>, decimals: u8) -> Self {
+        Self {
+            namespace: "intertrain".to_owned(),
+            symbol: symbol.into(),
+            contract: Some(format!("token:{token_id}")),
+            decimals,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -144,7 +475,7 @@ pub fn canonical_decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, Encoding
     postcard::from_bytes(bytes).map_err(|error| EncodingError::Decode(error.to_string()))
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Hash(pub [u8; 32]);
 
 impl Hash {
@@ -176,16 +507,20 @@ pub struct PublicKey(pub [u8; 32]);
 
 impl fmt::Debug for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("PublicKey").field(&hex_string(&self.0)).finish()
+        f.debug_tuple("PublicKey")
+            .field(&hex_string(&self.0))
+            .finish()
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Signature(pub [u8; 64]);
+pub struct Signature(#[serde(with = "BigArray")] pub [u8; 64]);
 
 impl fmt::Debug for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Signature").field(&hex_string(&self.0)).finish()
+        f.debug_tuple("Signature")
+            .field(&hex_string(&self.0))
+            .finish()
     }
 }
 
@@ -226,10 +561,12 @@ impl Address {
     }
 
     pub fn from_bech32m(value: &str) -> Result<Self, AddressError> {
-        let (hrp, data) = bech32::decode_bech32m(value).map_err(|_| AddressError::InvalidEncoding)?;
-        if hrp.as_str() != ADDRESS_HRP {
+        let checked =
+            CheckedHrpstring::new::<Bech32m>(value).map_err(|_| AddressError::InvalidEncoding)?;
+        if checked.hrp().as_str() != ADDRESS_HRP {
             return Err(AddressError::WrongPrefix);
         }
+        let data: Vec<u8> = checked.byte_iter().collect();
         if data.len() != 21 {
             return Err(AddressError::WrongLength);
         }
@@ -281,12 +618,12 @@ mod tests {
     #[test]
     fn rejects_wrong_prefix() {
         let address = Address::from_hash([7; 20]);
-        let wrong = bech32::encode::<Bech32m>(
-            Hrp::parse("wsc").unwrap(),
-            address.as_bytes(),
-        )
-        .unwrap();
-        assert_eq!(Address::from_bech32m(&wrong), Err(AddressError::WrongPrefix));
+        let wrong =
+            bech32::encode::<Bech32m>(Hrp::parse("wsc").unwrap(), address.as_bytes()).unwrap();
+        assert_eq!(
+            Address::from_bech32m(&wrong),
+            Err(AddressError::WrongPrefix)
+        );
     }
 
     #[test]

@@ -1,0 +1,27 @@
+# VPS runtime policy. Use together with devnet/docker-compose.yml.
+# RPC and diagnostic P2P ports stay on loopback until a TLS reverse proxy,
+# firewall policy, and (if public access is wanted) DNS are configured.
+services:
+  node1:
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:26657:26657"
+      - "127.0.0.1:26656:26656"
+
+  node2:
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:26658:26657"
+      - "127.0.0.1:26757:26656"
+
+  node3:
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:26659:26657"
+      - "127.0.0.1:26758:26656"
+
+  node4:
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:26660:26657"
+      - "127.0.0.1:26759:26656"

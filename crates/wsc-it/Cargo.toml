@@ -1,0 +1,12 @@
+[package]
+name = "wsc-it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+clap.workspace = true
+hex.workspace = true
+wat.workspace = true
+wsc-program = { path = "../wsc-program" }

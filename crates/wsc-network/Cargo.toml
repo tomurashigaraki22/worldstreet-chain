@@ -11,4 +11,5 @@ thiserror.workspace = true
 tokio.workspace = true
 wsc-consensus = { path = "../wsc-consensus" }
 wsc-core = { path = "../wsc-core" }
+wsc-crypto = { path = "../wsc-crypto" }
 wsc-node = { path = "../wsc-node" }

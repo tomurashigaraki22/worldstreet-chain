@@ -3,6 +3,20 @@
 This runbook deploys the current experimental Worldstreet Chain MVP on a fresh Ubuntu/Debian VPS using Docker.
 Do not use this release with real-value assets.
 
+
+### Low-cost Solana WSOL custody mode
+
+The devnet WSOL path does not deploy a custom Solana/Anchor program. Create the root-only vault and write its public configuration before starting Docker:
+
+```bash
+bash /root/worldstreet-chain/ops/setup-wsol-vault.sh
+docker compose --env-file devnet/.env -f devnet/docker-compose.yml -f devnet/docker-compose.vps.yml up -d --build
+systemctl daemon-reload
+systemctl restart worldstreet-relayer.service
+```
+
+Use `docs/WSOL_CUSTODY_MODE.md` for the memo-tagged deposit format and PowerShell example. The vault keypair is `/root/.config/solana/intertrain-wsol-vault.json` and must remain mode `0600`; do not copy it to the browser or repository.
+
 ## 1. VPS requirements and Docker
 
 Recommended minimum for the four-node devnet: 2 vCPU, 4 GB RAM, 20 GB free disk, and outbound HTTPS access
@@ -113,7 +127,7 @@ The init service creates one shared genesis and four node directories. Its valid
 development-only keys for repeatability and must never be reused elsewhere.
 
 ~~~bash
-docker compose -f devnet/docker-compose.yml up -d --build
+docker compose --env-file devnet/.env -f devnet/docker-compose.yml -f devnet/docker-compose.vps.yml up -d --build
 docker compose -f devnet/docker-compose.yml ps
 docker compose -f devnet/docker-compose.yml logs --tail=100 init
 docker compose -f devnet/docker-compose.yml logs --tail=100 node1

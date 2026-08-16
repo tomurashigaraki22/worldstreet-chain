@@ -220,7 +220,9 @@ fn derive_encryption_key(password: &str, salt: &[u8]) -> Result<[u8; KEY_BYTES],
 }
 
 fn decode_fixed<const N: usize>(value: &str) -> Result<[u8; N], WalletError> {
-    let bytes = BASE64.decode(value).map_err(|_| WalletError::InvalidField)?;
+    let bytes = BASE64
+        .decode(value)
+        .map_err(|_| WalletError::InvalidField)?;
     if bytes.len() != N {
         return Err(WalletError::InvalidField);
     }
@@ -236,7 +238,9 @@ mod tests {
     #[test]
     fn wallet_can_encrypt_and_decrypt() {
         let (wallet, _) = Wallet::create().unwrap();
-        let keystore = wallet.save_encrypted("correct horse battery staple").unwrap();
+        let keystore = wallet
+            .save_encrypted("correct horse battery staple")
+            .unwrap();
         let restored = keystore.decrypt("correct horse battery staple").unwrap();
         assert_eq!(wallet.address(), restored.address());
         assert_eq!(wallet.public_key(), restored.public_key());
@@ -256,7 +260,11 @@ mod tests {
     fn signed_message_verifies() {
         let (wallet, _) = Wallet::create().unwrap();
         let signature = wallet.sign(b"login challenge");
-        assert!(wsc_crypto::KeyPair::verify(&wallet.public_key(), b"login challenge", &signature));
+        assert!(wsc_crypto::KeyPair::verify(
+            &wallet.public_key(),
+            b"login challenge",
+            &signature
+        ));
     }
 
     #[test]
